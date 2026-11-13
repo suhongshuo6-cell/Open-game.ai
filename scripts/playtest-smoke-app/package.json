@@ -1,0 +1,5 @@
+{
+  "name": "opengame-playtest-smoke",
+  "private": true,
+  "main": "main.cjs"
+}

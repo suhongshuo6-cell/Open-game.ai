@@ -1,0 +1,23 @@
+node_modules
+dist/
+release/
+coverage/
+*.log
+.DS_Store
+.opengame-smoke/
+
+# Local credentials and machine-specific state
+.env*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+service-account*.json
+.opengame-private/
+*.tsbuildinfo
+*.tmp
+
+# Local project analysis and interview preparation
+项目拆解文档/

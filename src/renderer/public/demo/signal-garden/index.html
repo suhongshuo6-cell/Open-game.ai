@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Signal Garden</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05070d; overflow: hidden; font-family: -apple-system, 'SF Pro Display', 'PingFang SC', sans-serif; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(() => {
+  const c = document.getElementById('c');
+  const g = c.getContext('2d');
+  let W = 0, H = 0, dpr = 1;
+  const keys = new Set();
+  function resize() {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    W = c.clientWidth; H = c.clientHeight;
+    c.width = W * dpr; c.height = H * dpr;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  addEventListener('resize', resize); resize();
+  addEventListener('keydown', (e) => { keys.add(e.key.toLowerCase()); if (e.key.startsWith('Arrow')) e.preventDefault(); });
+  addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+
+  let state;
+  function reset() {
+    state = {
+      p: { x: W * 0.2, y: H * 0.5, vx: 0, vy: 0 },
+      nodes: Array.from({ length: 5 }, () => spawn(140)),
+      hazards: Array.from({ length: 4 }, (_, i) => ({
+        x: W * (0.45 + i * 0.12), y: H * (0.2 + (i % 2) * 0.6),
+        vx: (i % 2 ? -1 : 1) * 70, vy: (i % 3 ? 1 : -1) * 55, r: 16,
+      })),
+      score: 0, shield: 3, over: false, won: false, t: 0, parts: [], shake: 0, autopilot: true, idle: 0,
+    };
+  }
+  function spawn(min) {
+    for (let i = 0; i < 50; i++) {
+      const x = 40 + Math.random() * (W - 80), y = 60 + Math.random() * (H - 100);
+      if (!state || Math.hypot(x - state.p.x, y - state.p.y) > min) return { x, y, taken: false, ph: Math.random() * 6 };
+    }
+    return { x: W / 2, y: H / 2, taken: false, ph: 0 };
+  }
+  reset();
+  c.addEventListener('pointerdown', () => { if (state.over) reset(); state.autopilot = false; });
+
+  function burst(x, y, color, n = 18) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, s = 60 + Math.random() * 180;
+      state.parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.6 + Math.random() * 0.4, color });
+    }
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, (now - last) / 1000); last = now;
+    update(dt); draw();
+    requestAnimationFrame(frame);
+  }
+  function update(dt) {
+    const s = state; s.t += dt;
+    if (s.over) return;
+    let ax = 0, ay = 0;
+    if (keys.has('a') || keys.has('arrowleft')) ax -= 1;
+    if (keys.has('d') || keys.has('arrowright')) ax += 1;
+    if (keys.has('w') || keys.has('arrowup')) ay -= 1;
+    if (keys.has('s') || keys.has('arrowdown')) ay += 1;
+    if (ax || ay) s.autopilot = false;
+    if (s.autopilot) {
+      const target = s.nodes.find((n) => !n.taken);
+      if (target) {
+        ax = target.x - s.p.x; ay = target.y - s.p.y;
+        for (const h of s.hazards) {
+          const d = Math.hypot(h.x - s.p.x, h.y - s.p.y);
+          if (d < 90) { ax -= (h.x - s.p.x) * 2.4; ay -= (h.y - s.p.y) * 2.4; }
+        }
+        const m = Math.hypot(ax, ay) || 1; ax /= m; ay /= m;
+      }
+    }
+    const acc = 900, speed = 260;
+    s.p.vx += ax * acc * dt; s.p.vy += ay * acc * dt;
+    s.p.vx *= 0.9; s.p.vy *= 0.9;
+    const v = Math.hypot(s.p.vx, s.p.vy);
+    if (v > speed) { s.p.vx *= speed / v; s.p.vy *= speed / v; }
+    s.p.x = Math.max(14, Math.min(W - 14, s.p.x + s.p.vx * dt));
+    s.p.y = Math.max(14, Math.min(H - 14, s.p.y + s.p.vy * dt));
+    const boost = 1 + s.score * 0.12;
+    for (const h of s.hazards) {
+      h.x += h.vx * dt * boost; h.y += h.vy * dt * boost;
+      if (h.x < h.r || h.x > W - h.r) h.vx *= -1;
+      if (h.y < h.r || h.y > H - h.r) h.vy *= -1;
+      if (Math.hypot(h.x - s.p.x, h.y - s.p.y) < h.r + 11 && s.t > 0.8) {
+        s.shield -= 1; s.shake = 10; burst(s.p.x, s.p.y, '#ff5d73', 24);
+        const a = Math.atan2(s.p.y - h.y, s.p.x - h.x); s.p.vx = Math.cos(a) * 420; s.p.vy = Math.sin(a) * 420;
+        s.t = 0;
+        if (s.shield <= 0) { s.over = true; s.won = false; }
+      }
+    }
+    for (const n of s.nodes) {
+      if (!n.taken && Math.hypot(n.x - s.p.x, n.y - s.p.y) < 22) {
+        n.taken = true; s.score++; burst(n.x, n.y, '#5cf2c2', 26); s.shake = 4;
+        if (s.score >= 5) { s.over = true; s.won = true; }
+      }
+    }
+    s.parts = s.parts.filter((p) => (p.life -= dt) > 0);
+    for (const p of s.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.94; p.vy *= 0.94; }
+    s.shake *= 0.85;
+    if (s.over && s.autopilot) setTimeout(() => { if (state === s) reset(); }, 2200);
+  }
+  function draw() {
+    const s = state;
+    g.save();
+    g.translate((Math.random() - 0.5) * s.shake, (Math.random() - 0.5) * s.shake);
+    const bg = g.createRadialGradient(W * 0.5, H * 0.35, 20, W * 0.5, H * 0.5, Math.max(W, H));
+    bg.addColorStop(0, '#111a33'); bg.addColorStop(1, '#04060c');
+    g.fillStyle = bg; g.fillRect(-20, -20, W + 40, H + 40);
+    g.strokeStyle = 'rgba(120,160,255,0.07)'; g.lineWidth = 1;
+    for (let x = 0; x < W; x += 32) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+    for (let y = 0; y < H; y += 32) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    const time = performance.now() / 1000;
+    for (const n of s.nodes) {
+      if (n.taken) continue;
+      const r = 9 + Math.sin(time * 3 + n.ph) * 2;
+      glow(n.x, n.y, r, '#5cf2c2', 28);
+    }
+    for (const h of s.hazards) glow(h.x, h.y, h.r, '#ff5d73', 34);
+    glow(s.p.x, s.p.y, 11, '#7aa2ff', 30);
+    g.fillStyle = 'rgba(255,255,255,0.9)'; g.beginPath(); g.arc(s.p.x, s.p.y, 4, 0, Math.PI * 2); g.fill();
+    for (const p of s.parts) { g.globalAlpha = Math.max(0, p.life); g.fillStyle = p.color; g.fillRect(p.x - 1.5, p.y - 1.5, 3, 3); }
+    g.globalAlpha = 1;
+    g.restore();
+    g.fillStyle = 'rgba(255,255,255,0.92)'; g.font = '600 15px -apple-system, sans-serif';
+    g.fillText('Signal Garden', 18, 30);
+    g.fillStyle = 'rgba(255,255,255,0.5)'; g.font = '12px -apple-system, sans-serif';
+    g.fillText(s.autopilot ? 'AUTOPILOT · 按方向键接管' : 'WASD / 方向键移动', 18, 48);
+    g.textAlign = 'right'; g.fillStyle = 'rgba(255,255,255,0.9)'; g.font = '600 13px ui-monospace, monospace';
+    g.fillText(`NODES ${s.score}/5   SHIELD ${'◆'.repeat(Math.max(0, s.shield))}`, W - 18, 30);
+    g.textAlign = 'left';
+    if (s.over) {
+      g.fillStyle = 'rgba(4,6,12,0.55)'; g.fillRect(0, 0, W, H);
+      g.textAlign = 'center'; g.fillStyle = s.won ? '#5cf2c2' : '#ff5d73'; g.font = '700 30px -apple-system, sans-serif';
+      g.fillText(s.won ? 'SIGNAL RESTORED' : 'SHIELD DOWN', W / 2, H / 2);
+      g.fillStyle = 'rgba(255,255,255,0.7)'; g.font = '13px -apple-system, sans-serif';
+      g.fillText('点击画面重新开始', W / 2, H / 2 + 28); g.textAlign = 'left';
+    }
+  }
+  function glow(x, y, r, color, blur) {
+    g.save(); g.shadowColor = color; g.shadowBlur = blur; g.fillStyle = color;
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); g.restore();
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
